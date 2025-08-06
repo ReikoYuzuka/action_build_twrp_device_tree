@@ -3,15 +3,15 @@ name: Generate TWRP Device Tree
 on:
   workflow_dispatch:
     inputs:
-      LIBRARY_NAME:
+      library_name:  # 改为小写
         description: 'Library name for the device tree'
         required: true
         default: 'Twrp_Device_Generator'
-      IMG_URL:
+      img_url:  # 改为小写
         description: 'URL to recovery/boot image'
         required: true
         default: 'https://github.com/momo54181/action_build_twrp_device_tree/raw/main/recovery.img'
-      DEVICE_CODENAME:
+      device_codename:  # 改为小写
         description: 'Device codename (if auto-detection fails)'
         required: false
         默认: ''
@@ -40,10 +40,11 @@ jobs:
     - name: Install TWRP generator
       run: |
         pip3 install --upgrade twrpdtgen
+        pip3 install android-prop  # 确保安装属性解析库
         
     - name: Download recovery image
       run: |
-        wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
+        wget -O recovery.img "${{ inputs.img_url }}"
         file recovery.img || true
         
     - name: Convert sparse image if needed
@@ -57,23 +58,33 @@ jobs:
     - name: Extract device codename
       id: extract_codename
       run: |
-        # 安装并提取设备代号
-        pip install android-prop > /dev/null
+        set +e  # 禁用错误退出
         CODENAME=$(python3 -c "\
 from android_prop import Prop; \
-p = Prop.from_file('recovery.img'); \
-print(p.get_first('ro.product.device', 'ro.product.system.device', \
-'ro.product.vendor.device', 'ro.product.board') or '')" 2>/dev/null || echo '')
+try: \
+    p = Prop.from_file('recovery.img'); \
+    codename = p.get_first('ro.product.device', 'ro.product.system.device', \
+    'ro.product.vendor.device', 'ro.product.board'); \
+    print(codename or ''); \
+except: \
+    print('')")
+        set -e  # 重新启用错误退出
         echo "codename=$CODENAME" >> $GITHUB_OUTPUT
+        echo "Extracted codename: $CODENAME"
         
     - name: Generate device tree
       run: |
         mkdir -p device_tree_output
-        DEVICE="${{ github.event.inputs.DEVICE_CODENAME || steps.extract_codename.outputs.codename }}"
+        
+        # 优先使用手动输入的设备代号
+        if [ -n "${{ inputs.device_codename }}" ]; then
+          DEVICE="${{ inputs.device_codename }}"
+        else
+          DEVICE="${{ steps.extract_codename.outputs.codename }}"
+        fi
         
         if [ -n "$DEVICE" ]; then
           echo "Using device codename: $DEVICE"
-          # 修正参数顺序：设备代号在镜像路径前
           python3 -m twrpdtgen --device "$DEVICE" -o device_tree_output recovery.img
         else
           echo "No device codename provided, using auto-detection"
@@ -95,7 +106,7 @@ print(p.get_first('ro.product.device', 'ro.product.system.device', \
         body: |
           Automatically generated TWRP device tree
           Build run: ${{ github.run_number }}
-          Source image: ${{ github.event.inputs.IMG_URL }}
-          Device codename: ${{ github.event.inputs.DEVICE_CODENAME || steps.extract_codename.outputs.codename || 'Auto-detection failed' }}
+          Source image: ${{ inputs.img_url }}
+          Device codename: ${{ inputs.device_codename || steps.extract_codename.outputs.codename || 'Auto-detection failed' }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
