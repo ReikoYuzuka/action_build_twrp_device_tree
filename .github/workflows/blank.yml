@@ -37,10 +37,9 @@ jobs:
           unzip \
           android-sdk-libsparse-utils
         
-    - name: Install required Python packages
+    - name: Install TWRP generator
       run: |
         pip3 install --upgrade twrpdtgen
-        pip3 install android-prop  # 用于属性提取的库
         
     - name: Download recovery image
       run: |
@@ -58,9 +57,11 @@ jobs:
     - name: Extract device codename
       id: extract_codename
       run: |
-        # 使用android-prop库提取设备代号
-        CODENAME=$(python3 -c "from android_prop import Prop; \
-                  p = Prop.from_file('recovery.img'); \
+        # 使用twrpdtgen自带的prop模块提取属性
+        CODENAME=$(python3 -c "import sys; sys.path.append('/usr/local/lib/python3.10/dist-packages/twrpdtgen'); \
+                  from utils import prop; \
+                  p = prop.Prop(); \
+                  p.load_file('recovery.img'); \
                   print(p.get_first('ro.product.device', 'ro.product.system.device', \
                   'ro.product.vendor.device', 'ro.product.board'))" || true)
         
@@ -85,7 +86,7 @@ jobs:
           echo "Using auto-detected codename: $DEVICE"
         fi
         
-        # 修正的命令格式：设备代号作为位置参数，而不是--device选项
+        # 正确的命令格式
         python3 -m twrpdtgen -o device_tree_output --debug "$DEVICE" recovery.img
         
     - name: Compress device tree
