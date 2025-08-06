@@ -11,6 +11,10 @@ on:
         description: 'URL to recovery/boot image'
         required: true
         default: 'https://github.com/momo54181/action_build_twrp_device_tree/raw/main/recovery.img'
+      DEVICE_CODENAME:  # 新增设备代号参数
+        description: 'Device codename (if auto-detection fails)'
+        required: false
+        默认: ''
 
 jobs:
   generate-device-tree:
@@ -30,7 +34,8 @@ jobs:
           cpio \
           wget \
           zip \
-          unzip
+          unzip \
+          android-sdk-libsparse-utils  # 新增：用于处理sparse镜像
         
     - name: Install TWRP generator
       run: |
@@ -39,14 +44,47 @@ jobs:
     - name: Download recovery image
       run: |
         wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        file recovery.img || true  # Display file info for debugging
-      
+        file recovery.img || true
+        
+    - name: Convert sparse image if needed
+      run: |
+        if file recovery.img | grep -q "Android sparse image"; then
+          simg2img recovery.img recovery_raw.img
+          mv recovery_raw.img recovery.img
+          echo "Converted sparse image to raw format"
+        fi
+        
+    - name: Extract device codename
+      id: extract_codename
+      run: |
+        # 尝试从build.prop提取设备代号
+        if python3 -c "import sys; from android_prop import Prop; \
+          p = Prop.from_file('recovery.img'); \
+          codename = p.get_first('ro.product.device', 'ro.product.system.device', \
+          'ro.product.vendor.device', 'ro.product.board'); \
+          sys.exit(0) if codename else sys.exit(1)" > /dev/null 2>&1; then
+          CODENAME=$(python3 -c "from android_prop import Prop; \
+            p = Prop.from_file('recovery.img'); \
+            print(p.get_first('ro.product.device', 'ro.product.system.device', \
+            'ro.product.vendor.device', 'ro.product.board'))")
+          echo "codename=$CODENAME" >> $GITHUB_OUTPUT
+        else
+          echo "codename=" >> $GITHUB_OUTPUT
+        fi
+        
     - name: Generate device tree
       run: |
         mkdir -p device_tree_output
-        python3 -m twrpdtgen \
-          -o device_tree_output \
-          recovery.img
+        # 优先使用用户输入的设备代号，其次使用自动提取的
+        DEVICE="${{ github.event.inputs.DEVICE_CODENAME || steps.extract_codename.outputs.codename }}"
+        
+        if [ -n "$DEVICE" ]; then
+          echo "Using device codename: $DEVICE"
+          python3 -m twrpdtgen -o device_tree_output --device "$DEVICE" recovery.img
+        else
+          echo "No device codename provided, using auto-detection"
+          python3 -m twrpdtgen -o device_tree_output recovery.img
+        fi
         
     - name: Compress device tree
       run: |
@@ -64,5 +102,6 @@ jobs:
           Automatically generated TWRP device tree
           Build run: ${{ github.run_number }}
           Source image: ${{ github.event.inputs.IMG_URL }}
+          Device codename: ${{ github.event.inputs.DEVICE_CODENAME || steps.extract_codename.outputs.codename || 'Auto-detection failed' }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
