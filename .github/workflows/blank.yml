@@ -57,37 +57,28 @@ jobs:
     - name: Extract device codename
       id: extract_codename
       run: |
-        # 使用twrpdtgen自带的prop模块提取属性
-        CODENAME=$(python3 -c "import sys; sys.path.append('/usr/local/lib/python3.10/dist-packages/twrpdtgen'); \
-                  from utils import prop; \
-                  p = prop.Prop(); \
-                  p.load_file('recovery.img'); \
-                  print(p.get_first('ro.product.device', 'ro.product.system.device', \
-                  'ro.product.vendor.device', 'ro.product.board'))" || true)
-        
-        # 如果没有提取到代号，使用默认值
-        if [ -z "$CODENAME" ]; then
-          CODENAME="unknown_device"
-        fi
-        
-        echo "Extracted codename: $CODENAME"
+        # 安装并提取设备代号
+        pip install android-prop > /dev/null
+        CODENAME=$(python3 -c "\
+from android_prop import Prop; \
+p = Prop.from_file('recovery.img'); \
+print(p.get_first('ro.product.device', 'ro.product.system.device', \
+'ro.product.vendor.device', 'ro.product.board') or '')" 2>/dev/null || echo '')
         echo "codename=$CODENAME" >> $GITHUB_OUTPUT
         
     - name: Generate device tree
       run: |
         mkdir -p device_tree_output
+        DEVICE="${{ github.event.inputs.DEVICE_CODENAME || steps.extract_codename.outputs.codename }}"
         
-        # 优先使用用户输入的设备代号，其次使用自动提取的
-        if [ -n "${{ github.event.inputs.DEVICE_CODENAME }}" ]; then
-          DEVICE="${{ github.event.inputs.DEVICE_CODENAME }}"
-          echo "Using user-provided codename: $DEVICE"
+        if [ -n "$DEVICE" ]; then
+          echo "Using device codename: $DEVICE"
+          # 修正参数顺序：设备代号在镜像路径前
+          python3 -m twrpdtgen --device "$DEVICE" -o device_tree_output recovery.img
         else
-          DEVICE="${{ steps.extract_codename.outputs.codename }}"
-          echo "Using auto-detected codename: $DEVICE"
+          echo "No device codename provided, using auto-detection"
+          python3 -m twrpdtgen -o device_tree_output recovery.img
         fi
-        
-        # 正确的命令格式
-        python3 -m twrpdtgen -o device_tree_output --debug "$DEVICE" recovery.img
         
     - name: Compress device tree
       run: |
