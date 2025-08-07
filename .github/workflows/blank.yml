@@ -30,8 +30,7 @@ jobs:
           cpio \
           wget \
           zip \
-          unzip \
-          git  # 新增依赖
+          unzip
         
     - name: Install TWRP generator
       run: |
@@ -40,52 +39,14 @@ jobs:
     - name: Download recovery image
       run: |
         wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        file recovery.img || true
-        
-    # 新增：修复属性缺失问题
-    - name: Fix missing properties
-      run: |
-        # 安装Android Image Kitchen
-        git clone https://github.com/osm0sis/Android-Image-Kitchen.git AIK
-        cd AIK
-        ./unpackimg.sh ../recovery.img
-        
-        # 查找build.prop位置
-        PROP_FILE=$(find ramdisk -iname '*build.prop' -o -iname 'prop.default' | head -1)
-        
-        if [ -f "$PROP_FILE" ]; then
-          echo "找到属性文件: $PROP_FILE"
-          
-          # 添加缺失属性（使用ro.product.system.name的值）
-          if ! grep -q 'ro.product.system.device' "$PROP_FILE"; then
-            DEVICE_NAME=$(grep 'ro.product.system.name' "$PROP_FILE" | cut -d= -f2)
-            [ -z "$DEVICE_NAME" ] && DEVICE_NAME=$(grep 'ro.product.system.model' "$PROP_FILE" | cut -d= -f2)
-            [ -z "$DEVICE_NAME" ] && DEVICE_NAME="unknown_device"
-            
-            echo "添加缺失属性: ro.product.system.device=$DEVICE_NAME"
-            echo "ro.product.system.device=$DEVICE_NAME" >> "$PROP_FILE"
-          fi
-        else
-          echo "::warning::未找到属性文件，使用备用方案"
-        fi
-        
-        # 重新打包镜像
-        ./repackimg.sh
-        mv image-new.img ../recovery_fixed.img
-        cd ..
-        
+        file recovery.img || true  # Display file info for debugging
+      
     - name: Generate device tree
       run: |
         mkdir -p device_tree_output
-        
-        # 使用修复后的镜像
-        if [ -f recovery_fixed.img ]; then
-          echo "使用修复后的镜像"
-          python3 -m twrpdtgen -o device_tree_output recovery_fixed.img
-        else
-          echo "使用原始镜像"
-          python3 -m twrpdtgen -o device_tree_output recovery.img
-        fi
+        python3 -m twrpdtgen \
+          -o device_tree_output \
+          recovery.img
         
     - name: Compress device tree
       run: |
@@ -104,4 +65,4 @@ jobs:
           Build run: ${{ github.run_number }}
           Source image: ${{ github.event.inputs.IMG_URL }}
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }
